@@ -1,4 +1,21 @@
-import { IConstruct } from 'constructs';
+import { GraphqlOutput } from '@aws-amplify/backend-output-schemas';
+import {
+  AmplifyData,
+  AmplifyDynamoDbTableWrapper,
+  IAmplifyDataDefinition,
+  TranslationBehavior,
+} from '@aws-amplify/data-construct';
+import {
+  FunctionSchemaAccess,
+  JsResolver,
+} from '@aws-amplify/data-schema-types';
+import { generateModelsSync } from '@aws-amplify/graphql-generator';
+import {
+  AmplifyError,
+  AmplifyUserError,
+  CDKContextKey,
+  TagName,
+} from '@aws-amplify/platform-core';
 import {
   AmplifyFunction,
   AmplifyResourceGroupName,
@@ -11,16 +28,20 @@ import {
   ReferenceAuthResources,
   ResourceProvider,
 } from '@aws-amplify/plugin-types';
-import {
-  AmplifyData,
-  AmplifyDynamoDbTableWrapper,
-  IAmplifyDataDefinition,
-  TranslationBehavior,
-} from '@aws-amplify/data-construct';
-import { GraphqlOutput } from '@aws-amplify/backend-output-schemas';
-import { generateModelsSync } from '@aws-amplify/graphql-generator';
+import { Aspects, IAspect, RemovalPolicy, Tags } from 'aws-cdk-lib';
+import { Bucket } from 'aws-cdk-lib/aws-s3';
+import { BucketDeployment, Source } from 'aws-cdk-lib/aws-s3-deployment';
+import { IConstruct } from 'constructs';
 import * as path from 'path';
-import { AmplifyDataError, DataProps } from './types.js';
+import { AppSyncPolicyGenerator } from './app_sync_policy_generator.js';
+import {
+  ProvidedAuthConfig,
+  buildConstructFactoryProvidedAuthConfig,
+  convertAuthorizationModesToCDK,
+  isUsingDefaultApiKeyAuth,
+} from './convert_authorization_modes.js';
+import { convertFunctionNameMapToCDK } from './convert_functions.js';
+import { convertJsResolverDefinition } from './convert_js_resolvers.js';
 import {
   combineCDKSchemas,
   convertSchemaToCDK,
@@ -28,30 +49,9 @@ import {
   isDataSchema,
   splitSchemasByTableMap,
 } from './convert_schema.js';
-import { convertFunctionNameMapToCDK } from './convert_functions.js';
-import {
-  ProvidedAuthConfig,
-  buildConstructFactoryProvidedAuthConfig,
-  convertAuthorizationModesToCDK,
-  isUsingDefaultApiKeyAuth,
-} from './convert_authorization_modes.js';
-import { validateAuthorizationModes } from './validate_authorization_modes.js';
-import {
-  AmplifyError,
-  AmplifyUserError,
-  CDKContextKey,
-  TagName,
-} from '@aws-amplify/platform-core';
-import { Aspects, IAspect, RemovalPolicy, Tags } from 'aws-cdk-lib';
-import { convertJsResolverDefinition } from './convert_js_resolvers.js';
-import { AppSyncPolicyGenerator } from './app_sync_policy_generator.js';
-import {
-  FunctionSchemaAccess,
-  JsResolver,
-} from '@aws-amplify/data-schema-types';
-import { Bucket } from 'aws-cdk-lib/aws-s3';
-import { BucketDeployment, Source } from 'aws-cdk-lib/aws-s3-deployment';
 import { convertLoggingOptionsToCDK } from './logging_options_parser.js';
+import { AmplifyDataError, DataProps } from './types.js';
+import { validateAuthorizationModes } from './validate_authorization_modes.js';
 const modelIntrospectionSchemaKey = 'modelIntrospectionSchema.json';
 const defaultName = 'amplifyData';
 
@@ -295,6 +295,7 @@ class DataGenerator implements ConstructContainerEntryGenerator {
         authorizationModes,
         outputStorageStrategy: this.outputStorageStrategy,
         functionNameMap,
+        stackMappings: this.props.stackMapping,
         translationBehavior: {
           sandboxModeEnabled,
           /**
